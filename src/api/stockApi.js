@@ -1,28 +1,77 @@
 const ALPHA_VANTAGE_URL = "https://www.alphavantage.co/query";
+const ALPHA_VANTAGE_REQUEST_INTERVAL_MS = 1100;
 
-export async function fetchQuote(symbol) {
+let lastAlphaVantageRequestTime = 0;
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function waitForAlphaVantageRequestSlot() {
+  const now = Date.now();
+  const timeSinceLastRequest = now - lastAlphaVantageRequestTime;
+  const remainingWaitTime =
+    ALPHA_VANTAGE_REQUEST_INTERVAL_MS - timeSinceLastRequest;
+
+  if (remainingWaitTime > 0) {
+    await wait(remainingWaitTime);
+  }
+
+  lastAlphaVantageRequestTime = Date.now();
+}
+
+function isRateLimitMessage(message) {
+  if (typeof message !== "string") return false;
+
+  const normalizedMessage = message.toLowerCase();
+  return (
+    normalizedMessage.includes("rate limit") ||
+    normalizedMessage.includes("api requests") ||
+    normalizedMessage.includes("1 request per second")
+  );
+}
+
+async function requestAlphaVantage(params, requestErrorMessage) {
   const apiKey = import.meta.env.VITE_ALPHA_VANTAGE_API_KEY;
 
   if (!apiKey) {
     throw new Error("API_KEY_MISSING");
   }
 
-  const response = await fetch(
-    `${ALPHA_VANTAGE_URL}?function=GLOBAL_QUOTE&symbol=${encodeURIComponent(
-      symbol,
-    )}&apikey=${apiKey}`,
-  );
+  params.set("apikey", apiKey);
+
+  await waitForAlphaVantageRequestSlot();
+
+  const response = await fetch(`${ALPHA_VANTAGE_URL}?${params.toString()}`);
 
   if (!response.ok) {
-    throw new Error("API_REQUEST_FAILED");
+    throw new Error(requestErrorMessage);
   }
 
   const data = await response.json();
-  const quote = data["Global Quote"];
 
-  if (data.Note || data.Information) {
+  if (data.Note || isRateLimitMessage(data.Information)) {
     throw new Error("API_RATE_LIMIT");
   }
+
+  if (data.Information || data["Error Message"]) {
+    throw new Error(requestErrorMessage);
+  }
+
+  return data;
+}
+
+export async function fetchQuote(symbol) {
+  const data = await requestAlphaVantage(
+    new URLSearchParams({
+      function: "GLOBAL_QUOTE",
+      symbol,
+    }),
+    "API_REQUEST_FAILED",
+  );
+  const quote = data["Global Quote"];
 
   if (!quote || !quote["05. price"] || Number(quote["05. price"]) === 0) {
     throw new Error("STOCK_NOT_FOUND");
@@ -40,28 +89,15 @@ export async function fetchQuote(symbol) {
 }
 
 export async function fetchMonthlyCandles(symbol) {
-  const apiKey = import.meta.env.VITE_ALPHA_VANTAGE_API_KEY;
-
-  if (!apiKey) {
-    throw new Error("API_KEY_MISSING");
-  }
-
-  const response = await fetch(
-    `${ALPHA_VANTAGE_URL}?function=TIME_SERIES_DAILY&symbol=${encodeURIComponent(
+  const data = await requestAlphaVantage(
+    new URLSearchParams({
+      function: "TIME_SERIES_DAILY",
+      outputsize: "compact",
       symbol,
-    )}&outputsize=compact&apikey=${apiKey}`,
+    }),
+    "API_REQUEST_FAILED",
   );
-
-  if (!response.ok) {
-    throw new Error("API_REQUEST_FAILED");
-  }
-
-  const data = await response.json();
   const timeSeries = data["Time Series (Daily)"];
-
-  if (data.Note || data.Information) {
-    throw new Error("API_RATE_LIMIT");
-  }
 
   if (!timeSeries) {
     throw new Error("CHART_NOT_FOUND");
@@ -77,27 +113,15 @@ export async function fetchMonthlyCandles(symbol) {
 }
 
 export async function fetchCompanyNews(symbol) {
-  const apiKey = import.meta.env.VITE_ALPHA_VANTAGE_API_KEY;
-
-  if (!apiKey) {
-    throw new Error("API_KEY_MISSING");
-  }
-
-  const response = await fetch(
-    `${ALPHA_VANTAGE_URL}?function=NEWS_SENTIMENT&tickers=${encodeURIComponent(
-      symbol,
-    )}&sort=RELEVANCE&limit=20&apikey=${apiKey}`,
+  const data = await requestAlphaVantage(
+    new URLSearchParams({
+      function: "NEWS_SENTIMENT",
+      limit: "20",
+      sort: "RELEVANCE",
+      tickers: symbol,
+    }),
+    "NEWS_REQUEST_FAILED",
   );
-
-  if (!response.ok) {
-    throw new Error("NEWS_REQUEST_FAILED");
-  }
-
-  const data = await response.json();
-
-  if (data.Note || data.Information) {
-    throw new Error("API_RATE_LIMIT");
-  }
 
   if (!Array.isArray(data.feed)) {
     throw new Error("NEWS_REQUEST_FAILED");
