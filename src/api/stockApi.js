@@ -1,5 +1,6 @@
 const ALPHA_VANTAGE_URL = "https://www.alphavantage.co/query";
 const ALPHA_VANTAGE_REQUEST_INTERVAL_MS = 1100;
+const ALPHA_VANTAGE_API_KEY = "XUK5REH5HNVBU1W5";
 
 let lastAlphaVantageRequestTime = 0;
 
@@ -34,13 +35,11 @@ function isRateLimitMessage(message) {
 }
 
 async function requestAlphaVantage(params, requestErrorMessage) {
-  const apiKey = import.meta.env.VITE_ALPHA_VANTAGE_API_KEY;
-
-  if (!apiKey) {
+  if (!ALPHA_VANTAGE_API_KEY) {
     throw new Error("API_KEY_MISSING");
   }
 
-  params.set("apikey", apiKey);
+  params.set("apikey", ALPHA_VANTAGE_API_KEY);
 
   await waitForAlphaVantageRequestSlot();
 
